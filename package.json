@@ -1,0 +1,30 @@
+{
+  "name": "telegram-bot",
+  "version": "0.1.0",
+  "description": "Ruxshona Tort Telegram bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "telegram",
+    "telegraf",
+    "ruxshona"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "bwip-js": "^4.8.0",
+    "dotenv": "^17.3.1",
+    "telegraf": "^4.16.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
