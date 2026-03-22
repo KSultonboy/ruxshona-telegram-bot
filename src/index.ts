@@ -1,6 +1,7 @@
 import bwipjs from 'bwip-js';
 import { Context, Markup, Telegraf } from 'telegraf';
-import { checkMembership } from './membership';
+import type { ChatMember, ChatMemberUpdated } from 'telegraf/types';
+import { checkMembership, type MembershipResult, toMembershipResult } from './membership';
 import { config } from './config';
 import { BotStorage } from './storage';
 import {
@@ -12,6 +13,7 @@ import {
 
 const bot = new Telegraf(config.botToken);
 const storage = new BotStorage(config.stateFile);
+
 const BUTTONS = {
   balance: '💳 Balansim',
   barcode: '🪪 Barcodeim',
@@ -19,9 +21,7 @@ const BUTTONS = {
   checkMembership: "✅ A'zolikni tekshirish",
 } as const;
 
-const mainKeyboard = Markup.keyboard([
-  [BUTTONS.balance, BUTTONS.barcode],
-]).resize();
+const mainKeyboard = Markup.keyboard([[BUTTONS.balance, BUTTONS.barcode]]).resize();
 
 const membershipKeyboard = Markup.inlineKeyboard([
   ...(config.requiredChatInviteUrl
@@ -55,7 +55,7 @@ bot.start(async (ctx) => {
       `Assalomu alaykum, ${profile.firstName}.`,
       ``,
       `✨ Ruxshona Tort cashback botiga xush kelibsiz.`,
-      `Bu yerda siz cashback balansingizni kuzatasiz va shaxsiy barcode'ingizni olasiz.`,
+      `Bu yerda cashback balansingizni kuzatasiz va shaxsiy barcode'ingizni olasiz.`,
       ``,
       `Pastdagi menyudan kerakli bo'limni tanlang.`,
     ].join('\n'),
@@ -64,7 +64,7 @@ bot.start(async (ctx) => {
 });
 
 bot.hears(BUTTONS.balance, async (ctx) => {
-  const profile = await getOrCreateProfile(ctx);
+  const profile = await getProfileWithMembershipAccess(ctx, 'Balans');
   if (!profile) return;
 
   const lines = [
@@ -83,20 +83,19 @@ bot.hears(BUTTONS.balance, async (ctx) => {
 });
 
 bot.hears(BUTTONS.barcode, async (ctx) => {
-  const profile = await getOrCreateProfile(ctx);
+  const profile = await getProfileWithMembershipAccess(ctx, 'Barcode');
   if (!profile) return;
-
   await sendBarcode(ctx, profile);
 });
 
 bot.command('balance', async (ctx) => {
-  const profile = await getOrCreateProfile(ctx);
+  const profile = await getProfileWithMembershipAccess(ctx, 'Balans');
   if (!profile) return;
   await ctx.reply(`💳 Joriy balansingiz: ${formatMoney(profile.balance)} so'm`, mainKeyboard);
 });
 
 bot.command('barcode', async (ctx) => {
-  const profile = await getOrCreateProfile(ctx);
+  const profile = await getProfileWithMembershipAccess(ctx, 'Barcode');
   if (!profile) return;
   await sendBarcode(ctx, profile);
 });
@@ -109,6 +108,7 @@ bot.command('check', async (ctx) => {
     );
     return;
   }
+
   await handleMembershipCheck(ctx);
 });
 
@@ -121,6 +121,7 @@ bot.action('check_membership', async (ctx) => {
     );
     return;
   }
+
   await handleMembershipCheck(ctx);
 });
 
@@ -162,11 +163,24 @@ bot.command('status', async (ctx) => {
   );
 });
 
+bot.on('chat_member', async (ctx) => {
+  await syncMembershipFromChatMemberUpdate(ctx);
+});
+
 bot.on('my_chat_member', async (ctx) => {
   const title = 'title' in ctx.chat ? ctx.chat.title : 'n/a';
-  console.log(
-    `[my_chat_member] chatId=${ctx.chat.id} title=${title} status=${ctx.myChatMember.new_chat_member.status}`,
-  );
+  const status = ctx.myChatMember.new_chat_member.status;
+  const required = config.requiredChatId;
+  const forRequiredChat = required != null && sameChatId(required, ctx.chat.id);
+
+  if (forRequiredChat && (status === 'left' || status === 'kicked')) {
+    console.error(
+      `[my_chat_member] bot removed from required chat: chatId=${ctx.chat.id} title=${title} status=${status}`,
+    );
+    return;
+  }
+
+  console.log(`[my_chat_member] chatId=${ctx.chat.id} title=${title} status=${status}`);
 });
 
 bot.catch((error) => {
@@ -192,6 +206,77 @@ async function getOrCreateProfile(ctx: Context) {
     console.error('ERP cashback sync failed', error);
     await ctx.reply(formatErpConnectionError(error), mainKeyboard);
     return null;
+  }
+}
+
+async function getProfileWithMembershipAccess(ctx: Context, actionLabel: string) {
+  const profile = await getOrCreateProfile(ctx);
+  if (!profile) return null;
+
+  const canAccess = await ensureMembershipAccess(ctx, profile, actionLabel);
+  if (!canAccess) return null;
+
+  return profile;
+}
+
+async function ensureMembershipAccess(
+  ctx: Context,
+  profile: TelegramCashbackProfile,
+  actionLabel: string,
+) {
+  if (!config.membershipCheckEnabled) return true;
+
+  if (!ctx.from) {
+    await ctx.reply(`Foydalanuvchi ma'lumoti topilmadi.`);
+    return false;
+  }
+
+  if (config.requiredChatId == null) {
+    await ctx.reply(
+      `⚙️ A'zolik tekshiruvi yoqilgan, lekin REQUIRED_CHAT_ID sozlanmagan. Administratorga murojaat qiling.`,
+      mainKeyboard,
+    );
+    return false;
+  }
+
+  const latest = await getLatestMembershipState(ctx, profile);
+  if (latest.ok) return true;
+
+  await ctx.reply(
+    [
+      `🔒 ${actionLabel} bo'limi faqat a'zolar uchun ochiq.`,
+      `Davom etish uchun ${config.requiredChatTitle} guruhiga qo'shilib, tekshiruvni bosing.`,
+    ].join('\n'),
+    membershipKeyboard,
+  );
+  return false;
+}
+
+async function getLatestMembershipState(ctx: Context, profile: TelegramCashbackProfile) {
+  const now = Date.now();
+  const record = storage.getUser(ctx.from!.id);
+  const fallbackStatus = normalizeMembershipStatus(
+    record?.lastMembershipStatus ?? profile.lastMembershipStatus ?? 'unknown',
+  );
+  const fallbackResult: MembershipResult = {
+    ok: profile.verifiedMember || Boolean(record?.verifiedMember),
+    status: fallbackStatus,
+  };
+
+  const lastCheckAt = record?.lastMembershipCheckAt ? Date.parse(record.lastMembershipCheckAt) : Number.NaN;
+  const isFresh =
+    Number.isFinite(lastCheckAt) &&
+    now - lastCheckAt <= config.membershipStatusCacheTtlSeconds * 1000;
+
+  if (isFresh) {
+    return fallbackResult;
+  }
+
+  try {
+    return await verifyAndPersistMembership(ctx, { notifyBackend: true });
+  } catch (error) {
+    console.error('Automatic membership re-check failed', error);
+    return fallbackResult;
   }
 }
 
@@ -249,35 +334,21 @@ async function handleMembershipCheck(ctx: Context) {
   }
 
   if (config.requiredChatId == null) {
-    await ctx.reply(`⚙️ A'zolik tekshiruvi hali sozlanmagan. REQUIRED_CHAT_ID ni kiriting.`);
+    await ctx.reply(
+      `⚙️ A'zolik tekshiruvi yoqilgan, lekin REQUIRED_CHAT_ID sozlanmagan. Administratorga murojaat qiling.`,
+      mainKeyboard,
+    );
     return;
   }
 
   try {
-    const result = await checkMembership(bot, config.requiredChatId, ctx.from.id);
-
-    storage.upsertUser(ctx.from.id, {
-      username: ctx.from.username,
-      firstName: ctx.from.first_name,
-      lastName: ctx.from.last_name,
-      verifiedMember: result.ok,
-      lastMembershipStatus: result.status,
-      lastMembershipCheckAt: new Date().toISOString(),
-    });
-
-    await updateTelegramMembership(String(ctx.from.id), {
-      verifiedMember: result.ok,
-      lastMembershipStatus: result.status,
-    });
+    const result = await verifyAndPersistMembership(ctx, { notifyBackend: true });
 
     if (result.ok) {
       const profile = await getOrCreateProfile(ctx);
       if (!profile) return;
 
-      await ctx.reply(
-        `✅ A'zolik tasdiqlandi. Endi cashback barcode'ingiz tayyor.`,
-        mainKeyboard,
-      );
+      await ctx.reply(`✅ A'zolik tasdiqlandi. Endi cashback barcode'ingiz tayyor.`, mainKeyboard);
       await sendBarcode(ctx, profile);
       return;
     }
@@ -298,6 +369,104 @@ async function handleMembershipCheck(ctx: Context) {
       ].join('\n'),
     );
   }
+}
+
+async function verifyAndPersistMembership(
+  ctx: Context,
+  options?: { notifyBackend?: boolean },
+): Promise<MembershipResult> {
+  if (!ctx.from) {
+    return { ok: false, status: 'unknown' };
+  }
+  if (config.requiredChatId == null) {
+    return { ok: false, status: 'unknown' };
+  }
+
+  const result = await checkMembership(bot, config.requiredChatId, ctx.from.id);
+  await persistMembership(ctx.from.id, result, {
+    username: ctx.from.username,
+    firstName: ctx.from.first_name,
+    lastName: ctx.from.last_name,
+    notifyBackend: options?.notifyBackend ?? true,
+  });
+
+  return result;
+}
+
+async function syncMembershipFromChatMemberUpdate(ctx: Context) {
+  if (!config.membershipCheckEnabled || config.requiredChatId == null) return;
+
+  const update = (ctx.update as { chat_member?: ChatMemberUpdated }).chat_member;
+  if (!update) return;
+  if (!sameChatId(config.requiredChatId, update.chat.id)) return;
+
+  const userId = update.new_chat_member.user.id;
+  const result = toMembershipResult(update.new_chat_member as ChatMember);
+
+  try {
+    await persistMembership(userId, result, {
+      username: update.new_chat_member.user.username,
+      firstName: update.new_chat_member.user.first_name,
+      lastName: update.new_chat_member.user.last_name,
+      notifyBackend: true,
+    });
+  } catch (error) {
+    console.error('chat_member membership sync failed', error);
+  }
+}
+
+async function persistMembership(
+  telegramUserId: number,
+  result: MembershipResult,
+  input: {
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    notifyBackend: boolean;
+  },
+) {
+  const firstName = input.firstName ?? storage.getUser(telegramUserId)?.firstName ?? 'Telegram user';
+  const nowIso = new Date().toISOString();
+
+  storage.upsertUser(telegramUserId, {
+    username: input.username,
+    firstName,
+    lastName: input.lastName,
+    verifiedMember: result.ok,
+    lastMembershipStatus: result.status,
+    lastMembershipCheckAt: nowIso,
+  });
+
+  if (!input.notifyBackend) return;
+
+  try {
+    await updateTelegramMembership(String(telegramUserId), {
+      verifiedMember: result.ok,
+      lastMembershipStatus: result.status,
+    });
+  } catch (error) {
+    console.error('ERP membership sync failed', error);
+  }
+}
+
+function sameChatId(left: string | number, right: string | number) {
+  return String(left) === String(right);
+}
+
+function normalizeMembershipStatus(
+  value: string,
+): MembershipResult['status'] {
+  if (
+    value === 'creator' ||
+    value === 'administrator' ||
+    value === 'member' ||
+    value === 'restricted' ||
+    value === 'left' ||
+    value === 'kicked'
+  ) {
+    return value;
+  }
+  return 'unknown';
 }
 
 function formatMoney(value: number) {
@@ -329,7 +498,7 @@ function formatDateTime(value: string) {
 
 function formatErpConnectionError(error: unknown) {
   const message =
-    error instanceof Error ? `${error.message} ${String((error as any).cause ?? '')}` : String(error);
+    error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? '')}` : String(error);
 
   if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
     return [
