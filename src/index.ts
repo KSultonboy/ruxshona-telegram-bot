@@ -4,7 +4,7 @@ import type { ChatMember, ChatMemberUpdated } from 'telegraf/types';
 import { checkMembership, type MembershipResult, toMembershipResult } from './membership';
 import { config } from './config';
 import { BotStorage } from './storage';
-import { registerOrderHandlers } from './order-flow';
+import { registerOrderHandlers, handleOrderStart } from './order-flow';
 import {
   getTelegramCashbackProfile,
   syncTelegramCashbackUser,
@@ -18,11 +18,15 @@ const storage = new BotStorage(config.stateFile);
 const BUTTONS = {
   balance: '💳 Balansim',
   barcode: '🪪 Barcodeim',
+  order: '🛍️ Buyurtma berish',
   joinGroup: "🔗 Guruhga qo'shilish",
   checkMembership: "✅ A'zolikni tekshirish",
 } as const;
 
-const mainKeyboard = Markup.keyboard([[BUTTONS.balance, BUTTONS.barcode]]).resize();
+const mainKeyboard = Markup.keyboard([
+  [BUTTONS.balance, BUTTONS.barcode],
+  [BUTTONS.order],
+]).resize();
 
 const membershipKeyboard = Markup.inlineKeyboard([
   ...(config.requiredChatInviteUrl
@@ -100,6 +104,8 @@ bot.command('barcode', async (ctx) => {
   if (!profile) return;
   await sendBarcode(ctx, profile);
 });
+
+bot.hears(BUTTONS.order, handleOrderStart);
 
 bot.command('check', async (ctx) => {
   if (!config.membershipCheckEnabled) {

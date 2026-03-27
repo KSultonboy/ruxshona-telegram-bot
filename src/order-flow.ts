@@ -143,30 +143,32 @@ function confirmKeyboard() {
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
+export async function handleOrderStart(ctx: Context): Promise<void> {
+  const uid = ctx.from?.id;
+  if (!uid) return;
+
+  try {
+    const cats = await apiGet<PublicCategory[]>('/public/categories');
+    if (!cats.length) {
+      await ctx.reply("❌ Hozircha mahsulot kategoriyalari mavjud emas.");
+      return;
+    }
+    sessions.set(uid, { step: 'SELECT_CATEGORY', cart: [] });
+    await ctx.reply(
+      "🎂 Buyurtma berish\n\nQaysi kategoriyadan mahsulot tanlaysiz?",
+      catKeyboard(cats),
+    );
+  } catch (err) {
+    console.error('[order:start]', err);
+    await ctx.reply("⚠️ Ma'lumotlar yuklanmadi. Keyinroq urinib ko'ring.");
+  }
+}
+
 export function registerOrderHandlers(bot: Telegraf): void {
 
   // ── /order ────────────────────────────────────────────────────────────────
 
-  bot.command('order', async (ctx) => {
-    const uid = ctx.from?.id;
-    if (!uid) return;
-
-    try {
-      const cats = await apiGet<PublicCategory[]>('/public/categories');
-      if (!cats.length) {
-        await ctx.reply("❌ Hozircha mahsulot kategoriyalari mavjud emas.");
-        return;
-      }
-      sessions.set(uid, { step: 'SELECT_CATEGORY', cart: [] });
-      await ctx.reply(
-        "🎂 Buyurtma berish\n\nQaysi kategoriyadan mahsulot tanlaysiz?",
-        catKeyboard(cats),
-      );
-    } catch (err) {
-      console.error('[order:start]', err);
-      await ctx.reply("⚠️ Ma'lumotlar yuklanmadi. Keyinroq urinib ko'ring.");
-    }
-  });
+  bot.command('order', handleOrderStart);
 
   // ── Category selected ─────────────────────────────────────────────────────
 
