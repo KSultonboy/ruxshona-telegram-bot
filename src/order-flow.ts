@@ -330,6 +330,7 @@ export function registerOrderHandlers(bot: Telegraf): void {
       const order = await apiPost<CreatedOrder>('/public/orders', {
         customerName:  senderName(ctx),
         phone:         state.phone !== '—' ? state.phone : undefined,
+        channel:       'TELEGRAM',
         items: state.cart.map(i => ({
           productId: i.productId,
           quantity:  i.quantity,
