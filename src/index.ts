@@ -4,6 +4,7 @@ import type { ChatMember, ChatMemberUpdated } from 'telegraf/types';
 import { checkMembership, type MembershipResult, toMembershipResult } from './membership';
 import { config } from './config';
 import { BotStorage } from './storage';
+import { registerOrderHandlers } from './order-flow';
 import {
   getTelegramCashbackProfile,
   syncTelegramCashbackUser,
@@ -182,6 +183,8 @@ bot.on('my_chat_member', async (ctx) => {
 
   console.log(`[my_chat_member] chatId=${ctx.chat.id} title=${title} status=${status}`);
 });
+
+registerOrderHandlers(bot);
 
 bot.catch((error) => {
   console.error('Telegram bot error', error);
@@ -517,6 +520,7 @@ async function bootstrap() {
     { command: 'balance', description: 'Cashback balansini ko‘rish' },
     { command: 'barcode', description: 'Shaxsiy barcode ni olish' },
     { command: 'check', description: "A'zolikni tekshirish" },
+    { command: 'order', description: "Buyurtma berish" },
   ]);
 
   await bot.launch();
