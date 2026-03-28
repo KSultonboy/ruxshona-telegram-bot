@@ -63,13 +63,40 @@ bot.start(async (ctx) => {
     return;
   }
 
-  // Deep link: store pending challenge, then ask for contact
   if (payload) {
+    // Deep link — store challenge, ask for contact (telegramId needed for confirm)
     storage.setPendingChallenge(ctx.from.id, payload);
     console.log(`[start] stored pendingChallengeId=${payload} for user=${ctx.from.id}`);
+    await ctx.reply(
+      [
+        "Salom! Ruxshona To'rt cashback tizimiga xush kelibsiz! 🎂",
+        '',
+        "Davom etish uchun ma'lumotlaringizni ulashing:",
+      ].join('\n'),
+      Markup.keyboard([
+        [Markup.button.contactRequest("✅ Ma'lumotlarni ulashish")],
+      ]).resize().oneTime(),
+    );
+    return;
   }
 
-  // Always ask for contact on /start (new or returning user with deep link)
+  const existingUser = storage.getUser(ctx.from.id);
+  if (existingUser) {
+    // Returning user — go straight to main menu
+    const profile = await getOrCreateProfile(ctx);
+    if (!profile) return;
+    await ctx.reply(
+      [
+        `Assalomu alaykum, ${profile.firstName}!`,
+        '',
+        `Pastdagi menyudan kerakli bo'limni tanlang.`,
+      ].join('\n'),
+      mainKeyboard,
+    );
+    return;
+  }
+
+  // New user — ask for contact
   await ctx.reply(
     [
       "Salom! Ruxshona To'rt cashback tizimiga xush kelibsiz! 🎂",
@@ -109,13 +136,11 @@ bot.on('contact', async (ctx) => {
     storage.clearPendingChallenge(ctx.from.id);
     try {
       console.log(`[contact] calling confirmTelegramLink challengeId=${pendingChallengeId} telegramId=${telegramId}`);
-      await confirmTelegramLink({ challengeId: pendingChallengeId, telegramId });
+      const result = await confirmTelegramLink({ challengeId: pendingChallengeId, telegramId });
+      console.log(`[contact] confirmTelegramLink ok, code=${result.code}`);
       await ctx.reply(
-        [
-          '✅ Tasdiqlash kodi yuborildi!',
-          "Kodni website dagi Cashback bo'limiga kiriting.",
-        ].join('\n'),
-        mainKeyboard,
+        `✅ Tasdiqlash kodingiz: *${result.code}*\n\nBu kodni website da kiriting.`,
+        { parse_mode: 'Markdown', reply_markup: mainKeyboard.reply_markup },
       );
     } catch (error) {
       console.error('[contact] confirmTelegramLink failed:', error);

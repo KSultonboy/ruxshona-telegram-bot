@@ -85,7 +85,7 @@ export async function confirmTelegramLink(input: {
   challengeId: string;
   telegramId: string;
 }) {
-  return request<{ ok: boolean }>('/customers/link/telegram/bot-confirm', {
+  return request<{ ok: boolean; code: string }>('/customers/link/telegram/bot-confirm', {
     method: 'POST',
     body: JSON.stringify(input),
   });
