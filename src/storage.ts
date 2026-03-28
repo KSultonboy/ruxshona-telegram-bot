@@ -18,6 +18,7 @@ export interface StoredUser {
   verifiedMember: boolean;
   lastMembershipStatus: MembershipStatus;
   lastMembershipCheckAt?: string;
+  pendingChallengeId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,6 +64,29 @@ export class BotStorage {
 
   getUser(telegramId: number): StoredUser | undefined {
     return this.read().users[String(telegramId)];
+  }
+
+  getPendingChallenge(telegramId: number): string | undefined {
+    return this.read().users[String(telegramId)]?.pendingChallengeId;
+  }
+
+  setPendingChallenge(telegramId: number, challengeId: string): void {
+    const state = this.read();
+    const key = String(telegramId);
+    if (state.users[key]) {
+      state.users[key] = { ...state.users[key], pendingChallengeId: challengeId };
+      this.write(state);
+    }
+  }
+
+  clearPendingChallenge(telegramId: number): void {
+    const state = this.read();
+    const key = String(telegramId);
+    if (state.users[key]) {
+      const { pendingChallengeId: _removed, ...rest } = state.users[key];
+      state.users[key] = rest as StoredUser;
+      this.write(state);
+    }
   }
 
   private ensureFile() {

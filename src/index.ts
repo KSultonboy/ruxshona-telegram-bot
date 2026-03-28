@@ -53,15 +53,63 @@ bot.use(async (ctx, next) => {
 });
 
 bot.start(async (ctx) => {
-  const payload = (ctx as unknown as { startPayload?: string }).startPayload ?? '';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: string = (ctx as any).startPayload ?? '';
 
+  console.log(`[start] from=${ctx.from?.id} username=${ctx.from?.username} payload=${JSON.stringify(payload)}`);
+
+  if (!ctx.from) {
+    await ctx.reply("Foydalanuvchi ma'lumoti topilmadi.");
+    return;
+  }
+
+  // Deep link: store pending challenge, then ask for contact
   if (payload) {
-    if (!ctx.from) {
-      await ctx.reply("Foydalanuvchi ma'lumoti topilmadi.");
-      return;
-    }
+    storage.setPendingChallenge(ctx.from.id, payload);
+    console.log(`[start] stored pendingChallengeId=${payload} for user=${ctx.from.id}`);
+  }
+
+  // Always ask for contact on /start (new or returning user with deep link)
+  await ctx.reply(
+    [
+      "Salom! Ruxshona To'rt cashback tizimiga xush kelibsiz! 🎂",
+      '',
+      "Davom etish uchun ma'lumotlaringizni ulashing:",
+    ].join('\n'),
+    Markup.keyboard([
+      [Markup.button.contactRequest("✅ Ma'lumotlarni ulashish")],
+    ]).resize().oneTime(),
+  );
+});
+
+bot.on('contact', async (ctx) => {
+  if (!ctx.from || !('contact' in ctx.message)) return;
+  const contact = ctx.message.contact;
+  const telegramId = String(ctx.from.id);
+
+  console.log(`[contact] telegramId=${telegramId} phone=${contact.phone_number}`);
+
+  // Sync user with backend
+  try {
+    await syncTelegramCashbackUser({
+      telegramId,
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+    });
+  } catch (error) {
+    console.error('[contact] backend sync failed:', error);
+  }
+
+  // Check for pending challenge (from deep link)
+  const pendingChallengeId = storage.getPendingChallenge(ctx.from.id);
+  console.log(`[contact] pendingChallengeId=${pendingChallengeId ?? 'none'}`);
+
+  if (pendingChallengeId) {
+    storage.clearPendingChallenge(ctx.from.id);
     try {
-      await confirmTelegramLink({ challengeId: payload, telegramId: String(ctx.from.id) });
+      console.log(`[contact] calling confirmTelegramLink challengeId=${pendingChallengeId} telegramId=${telegramId}`);
+      await confirmTelegramLink({ challengeId: pendingChallengeId, telegramId });
       await ctx.reply(
         [
           '✅ Tasdiqlash kodi yuborildi!',
@@ -69,26 +117,26 @@ bot.start(async (ctx) => {
         ].join('\n'),
         mainKeyboard,
       );
-    } catch {
+    } catch (error) {
+      console.error('[contact] confirmTelegramLink failed:', error);
       await ctx.reply(
-        "⚠️ Link yaroqsiz yoki muhlati o'tib ketgan. Checkout sahifasida qayta urinib ko'ring.",
+        "⚠️ Link tasdiqlanmadi. Checkout sahifasida qayta urinib ko'ring.",
         mainKeyboard,
       );
     }
-    // Sync profile in background (don't block response)
-    void getOrCreateProfile(ctx).catch(() => {});
     return;
   }
 
+  // Normal flow: show profile
   const profile = await getOrCreateProfile(ctx);
   if (!profile) return;
 
   await ctx.reply(
     [
-      `Assalomu alaykum, ${profile.firstName}.`,
+      `Assalomu alaykum, ${profile.firstName}! ✅`,
       ``,
-      `✨ Ruxshona Tort cashback botiga xush kelibsiz.`,
-      `Bu yerda cashback balansingizni kuzatasiz va shaxsiy barcode'ingizni olasiz.`,
+      `💳 Balans: ${formatMoney(profile.balance)} so'm`,
+      `🪪 Barcode: ${profile.barcode}`,
       ``,
       `Pastdagi menyudan kerakli bo'limni tanlang.`,
     ].join('\n'),
