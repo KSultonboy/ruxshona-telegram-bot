@@ -80,3 +80,13 @@ export async function updateTelegramMembership(
     },
   );
 }
+
+export async function confirmTelegramLink(input: {
+  challengeId: string;
+  telegramId: string;
+}) {
+  return request<{ ok: boolean }>('/customers/link/telegram/bot-confirm', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

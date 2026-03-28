@@ -6,6 +6,7 @@ import { config } from './config';
 import { BotStorage } from './storage';
 import { registerOrderHandlers, handleOrderStart } from './order-flow';
 import {
+  confirmTelegramLink,
   getTelegramCashbackProfile,
   syncTelegramCashbackUser,
   updateTelegramMembership,
@@ -52,6 +53,33 @@ bot.use(async (ctx, next) => {
 });
 
 bot.start(async (ctx) => {
+  const payload = (ctx as unknown as { startPayload?: string }).startPayload ?? '';
+
+  if (payload) {
+    if (!ctx.from) {
+      await ctx.reply("Foydalanuvchi ma'lumoti topilmadi.");
+      return;
+    }
+    try {
+      await confirmTelegramLink({ challengeId: payload, telegramId: String(ctx.from.id) });
+      await ctx.reply(
+        [
+          '✅ Tasdiqlash kodi yuborildi!',
+          "Kodni website dagi Cashback bo'limiga kiriting.",
+        ].join('\n'),
+        mainKeyboard,
+      );
+    } catch {
+      await ctx.reply(
+        "⚠️ Link yaroqsiz yoki muhlati o'tib ketgan. Checkout sahifasida qayta urinib ko'ring.",
+        mainKeyboard,
+      );
+    }
+    // Sync profile in background (don't block response)
+    void getOrCreateProfile(ctx).catch(() => {});
+    return;
+  }
+
   const profile = await getOrCreateProfile(ctx);
   if (!profile) return;
 
