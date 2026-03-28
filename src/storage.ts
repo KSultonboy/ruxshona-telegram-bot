@@ -53,6 +53,7 @@ export class BotStorage {
       lastMembershipStatus: patch.lastMembershipStatus,
       lastMembershipCheckAt:
         patch.lastMembershipCheckAt ?? existing?.lastMembershipCheckAt,
+      pendingChallengeId: existing?.pendingChallengeId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
